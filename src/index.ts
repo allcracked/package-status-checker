@@ -131,9 +131,7 @@ async function runTask() {
       console.log(JSON.stringify(changes, null, 2));
 
       console.log(`Sending message to telegram`);
-      await telegramBotService.sendMessage(
-        `Changes detected for guides\n${JSON.stringify(changes, null, 2)}`
-      );
+      await telegramBotService.sendUpdateMessage(changes.whatChanged || []);
     } else {
       console.log("No changes detected");
     }
@@ -149,7 +147,10 @@ async function runTask() {
 }
 
 async function main() {
-  await telegramBotService.sendMessage("Bot started");
+  await telegramBotService.sendMessage(`
+    <b>Bot started</b>
+    Bot started at ${dayjs().format("YYYY-MM-DD HH:mm:ss")}
+    `);
   runTask();
 
   const interval = setInterval(runTask, INTERVAL_MS);
@@ -159,7 +160,10 @@ async function main() {
     process.on(signal, async () => {
       clearInterval(interval);
       console.log(`Received signal ${signal}, shutting down`);
-      await telegramBotService.sendMessage("Bot shutting down");
+      await telegramBotService.sendMessage(`
+        <b>Bot stopped</b>
+        Bot stopped at ${dayjs().format("YYYY-MM-DD HH:mm:ss")}
+        `);
       process.exit(0);
     });
   }
