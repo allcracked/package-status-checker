@@ -1,4 +1,5 @@
 import { config } from "../config";
+import { ErrorLogType } from "../models/ErrorLogs.model";
 
 import InTransitParcel from "../models/InTransitParcels.model";
 import SercargoRequestData, {
@@ -7,6 +8,7 @@ import SercargoRequestData, {
   SercargoParcelsForUserSubAction,
   SercargoParceslsForUserDeliveredOptions,
 } from "../models/SercargoRequestData.model";
+import errorLogger from "./log.service";
 
 class FetchService {
   private sercargoURL = "https://app.sercargologistics.com/servidor/";
@@ -58,7 +60,7 @@ class FetchService {
 
       return response;
     } catch (error) {
-      console.error(error);
+      errorLogger.log(`Error while fetching sercargo parcels ${error}`, ErrorLogType.ERROR);
       return [];
     }
   }

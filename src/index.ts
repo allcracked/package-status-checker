@@ -5,8 +5,10 @@ import InTransitParcel from "./models/InTransitParcels.model";
 import dayjs from "dayjs";
 import ParcelUpdatedResponse from "./models/ParcelUpdatedResponse.model";
 import telegramBotService from "./services/telegramBot.service";
+import errorLogger from "./services/log.service";
+import { ErrorLogType } from "./models/ErrorLogs.model";
 
-const INTERVAL_MS = 10000;
+const INTERVAL_MS = 60*1000;
 
 async function init(parcels: InTransitParcel[]) {
   if (!parcels.length) {
@@ -142,7 +144,7 @@ async function runTask() {
     );
     console.log("=".repeat(50));
   } catch (error) {
-    console.error(`Task failed with error: ${error}`);
+    errorLogger.log(`Task failed with error: ${error}`, ErrorLogType.ERROR);
   }
 }
 
@@ -152,6 +154,7 @@ async function main() {
     Bot started at ${dayjs().format("YYYY-MM-DD HH:mm:ss")}
     `);
   runTask();
+  telegramBotService.listenForCommands();
 
   const interval = setInterval(runTask, INTERVAL_MS);
 

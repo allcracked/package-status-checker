@@ -2,6 +2,9 @@ import TelegramBot from "node-telegram-bot-api";
 
 import { config } from "../config";
 import { UpdateParcelProperty } from "../models/ParcelUpdatedResponse.model";
+import FetchServiceInstance from "./fetch.service";
+import errorLogger from "./log.service";
+import { ErrorLogType } from "../models/ErrorLogs.model";
 
 class TelegramBotService {
   private bot;
@@ -19,7 +22,7 @@ class TelegramBotService {
     try {
       await this.bot.sendMessage(chatId, message, { parse_mode: "HTML" });
     } catch (error) {
-      console.error(`Error sending message to chat ${chatId}: ${error}`);
+      errorLogger.log(`Error sending message to chat ${chatId}: ${error}`, ErrorLogType.ERROR);
     }
   }
 
@@ -28,19 +31,17 @@ class TelegramBotService {
   ): Promise<void> {
     try {
       for await (const change of changes) {
-        const formattedMessage = `<b>Status Update for Guide ${
-          change.guideId
-        } 📣 \n\n</b>Property <b>${change.property}</b> change from <b>${
-          change.updatedFrom
-        }</b> to <b>${change.updatedValue}</b>.\n\n<pre><code class="languague-JSON">${JSON.stringify(
-          change,
-          null,
-          2
-        )}</code></pre>`;
+        const formattedMessage = `<b>Status Update for Guide ${change.guideId
+          } 📣 \n\n</b>Property <b>${change.property}</b> change from <b>${change.updatedFrom
+          }</b> to <b>${change.updatedValue}</b>.\n\n<pre><code class="languague-JSON">${JSON.stringify(
+            change,
+            null,
+            2
+          )}</code></pre>`;
         await this.sendMessage(formattedMessage, config.TELEGRAM_CHAT_ID);
       }
     } catch (error) {
-      console.error(`Error sending update message: ${error}`);
+      errorLogger.log(`Error sending update message: ${error}`, ErrorLogType.ERROR);
     }
   }
 
@@ -51,6 +52,67 @@ class TelegramBotService {
 
       console.log(`Received message from chat ${chatId}`);
     });
+  }
+
+  public async listenForCommands() {
+    try {
+      // Status
+      this.bot.onText(/\/status/, async (message, match) => {
+        const chatId = message.chat.id;
+
+        const allParcerls = await FetchServiceInstance.sercargoFetchInTransitParcels();
+
+        if (allParcerls.length <= 0) {
+          this.sendMessage(`<b>No Packages Avialable</b>`, chatId);
+        } else {
+          let returningMessage = `<b>${allParcerls.length} Available Package${allParcerls.length > 1 ? 's' : ''}</b>\n\n`;
+
+          for (const parcel of allParcerls) {
+            returningMessage += `<b>${parcel.guia} - ${parcel.estado} - ${parcel.total}</b>\n`;
+          }
+
+          this.sendMessage(returningMessage, chatId);
+        }
+      });
+
+      // Detailed
+      this.bot.onText(/\/detailed/, async (message, match) => {
+        const chatId = message.chat.id;
+
+        const allParcerls = await FetchServiceInstance.sercargoFetchInTransitParcels();
+
+        if (allParcerls.length <= 0) {
+          this.sendMessage(`<b>No Packages Avialable</b>`, chatId);
+        } else {
+          let returningMessage = `<b>${allParcerls.length} Available Package${allParcerls.length > 1 ? 's' : ''}</b>\n\n`;
+
+          for (const parcel of allParcerls) {
+            returningMessage += `<b>${parcel.guia} - ${parcel.estado} - ${parcel.total}</b>\n<pre><code class="languague-JSON">${JSON.stringify(parcel, null, 2)}</code></pre>\n\n`;
+          }
+
+          this.sendMessage(returningMessage, chatId);
+        }
+      });
+
+      // Errors
+      this.bot.onText(/\/errors/, (message, match) => {
+        const chatId = message.chat.id;
+
+        const allLogs = errorLogger.getLogs();
+
+        if (allLogs.length <= 0) {
+          this.sendMessage(`<b>No Error Logs Avialable</b>`, chatId);
+        } else {
+          let returningMessage = `<b>${allLogs.length} Logs Found</b>\n\n`;
+
+          returningMessage += `<pre><code class="language-JSON">${JSON.stringify(allLogs, null, 2)}</code></pre>`
+          this.sendMessage(returningMessage, chatId)
+        }
+      });
+
+    } catch (error) {
+      errorLogger.log(`Error while listening for commands ${error}`, ErrorLogType.ERROR);
+    }
   }
 }
 
