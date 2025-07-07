@@ -7,8 +7,10 @@ import ParcelUpdatedResponse from "./models/ParcelUpdatedResponse.model";
 import telegramBotService from "./services/telegramBot.service";
 import errorLogger from "./services/log.service";
 import { ErrorLogType } from "./models/ErrorLogs.model";
+import http from "http";
 
-const INTERVAL_MS = 60*1000;
+const INTERVAL_MS = 60 * 1000;
+const PORT = Number(process.env.PORT) || 3000;
 
 async function init(parcels: InTransitParcel[]) {
   if (!parcels.length) {
@@ -173,3 +175,16 @@ async function main() {
 }
 
 main();
+
+// Health-check server
+http.createServer((req, res) => {
+  if (req.method === "GET" && req.url === "/") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok" }));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+}).listen(PORT, () => {
+  console.log(`Health check server listening on port ${PORT}`);
+});
