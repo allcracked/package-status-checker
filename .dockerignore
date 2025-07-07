@@ -1,0 +1,11 @@
+# dependencies
+node_modules
+
+# logs
+npm-debug.log*
+
+# local environment files
+.env
+
+# database file
+sercargo.db
