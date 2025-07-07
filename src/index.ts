@@ -119,9 +119,17 @@ async function runTask() {
     console.log(`Task started at ${dayjs().format("YYYY-MM-DD HH:mm:ss")}`);
     console.log(`## Fetching parcels from sercargo`);
 
+    // Track previous and current package counts
+    const oldCount = db.getParcels().length;
     const sercargoParcels =
       await FetchServiceInstance.sercargoFetchInTransitParcels();
-
+    const newCount = sercargoParcels.length;
+    if (newCount !== oldCount) {
+      const diff = newCount - oldCount;
+      const changeSign = diff > 0 ? '+' : '';
+      const message = `<b>Package count changed</b>\nBefore: ${oldCount}\nAfter: ${newCount}\nChange: ${changeSign}${diff}`;
+      await telegramBotService.sendMessage(message);
+    }
     console.log(`Fetched ${sercargoParcels.length} parcels`);
 
     console.log(`## Processing parcels and saving into database if new`);
