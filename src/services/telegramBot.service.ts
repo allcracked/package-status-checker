@@ -19,8 +19,12 @@ class TelegramBotService {
     message: string,
     chatId: TelegramBot.ChatId = config.TELEGRAM_CHAT_ID
   ) {
+    const MAX_LENGTH = 4096;
     try {
-      await this.bot.sendMessage(chatId, message, { parse_mode: "HTML" });
+      for (let start = 0; start < message.length; start += MAX_LENGTH) {
+        const chunk = message.substring(start, start + MAX_LENGTH);
+        await this.bot.sendMessage(chatId, chunk, { parse_mode: "HTML" });
+      }
     } catch (error) {
       errorLogger.log(`Error sending message to chat ${chatId}: ${error}`, ErrorLogType.ERROR);
     }
@@ -66,10 +70,14 @@ class TelegramBotService {
           this.sendMessage(`<b>No Packages Avialable</b>`, chatId);
         } else {
           let returningMessage = `<b>${allParcerls.length} Available Package${allParcerls.length > 1 ? 's' : ''}</b>\n\n`;
+          let totalCharge = 0;
 
           for (const parcel of allParcerls) {
             returningMessage += `<b>${parcel.guia} - ${parcel.estado} - ${parcel.total}</b>\n`;
+            totalCharge += parseFloat(parcel.total_monto);
           }
+
+          returningMessage += `\n<b>Total Charge: ${totalCharge.toFixed(2)}</b>`;
 
           this.sendMessage(returningMessage, chatId);
         }

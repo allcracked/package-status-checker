@@ -120,14 +120,26 @@ async function runTask() {
     console.log(`## Fetching parcels from sercargo`);
 
     // Track previous and current package counts
-    const oldCount = db.getParcels().length;
+    const oldParcels = db.getParcels();
+    const oldCount = oldParcels.length;
     const sercargoParcels =
       await FetchServiceInstance.sercargoFetchInTransitParcels();
     const newCount = sercargoParcels.length;
     if (newCount !== oldCount) {
       const diff = newCount - oldCount;
       const changeSign = diff > 0 ? '+' : '';
-      const message = `<b>Package count changed</b>\nBefore: ${oldCount}\nAfter: ${newCount}\nChange: ${changeSign}${diff}`;
+      // Determine which GUIDs were added or removed
+      const oldGuids = oldParcels.map(p => p.guia);
+      const newGuids = sercargoParcels.map(p => p.guia);
+      let detail = '';
+      if (diff > 0) {
+        const added = newGuids.filter(g => !oldGuids.includes(g));
+        detail = `Added: ${added.join(', ')}`;
+      } else {
+        const removed = oldGuids.filter(g => !newGuids.includes(g));
+        detail = `Removed: ${removed.join(', ')}`;
+      }
+      const message = `<b>Package count changed</b>\nBefore: ${oldCount}\nAfter: ${newCount}\nChange: ${changeSign}${diff}\n${detail}`;
       await telegramBotService.sendMessage(message);
     }
     console.log(`Fetched ${sercargoParcels.length} parcels`);
