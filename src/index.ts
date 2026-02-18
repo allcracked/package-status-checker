@@ -19,6 +19,7 @@ async function init(parcels: InTransitParcel[]) {
   }
 
   for await (const parcel of parcels) {
+    if (!parcel.guia) continue;
     const guideNumber = Number.parseInt(parcel.guia);
     const existingParcel = db.getParcel(guideNumber);
 
@@ -43,6 +44,7 @@ async function checkChanges(
   }
 
   for await (const parcel of parcels) {
+    if (!parcel.guia) continue;
     const guideNumber = Number.parseInt(parcel.guia);
     const existingParcel = db.getParcel(guideNumber);
 

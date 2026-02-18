@@ -44,6 +44,6 @@ EXPOSE 3000
 
 # Coolify uses this to determine container health
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:3000/ || exit 1
+  CMD wget -qO- http://localhost:${PORT:-3000}/ || exit 1
 
 CMD ["node", "--max-old-space-size=256", "dist/index.js"]
