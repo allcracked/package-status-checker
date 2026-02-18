@@ -53,8 +53,6 @@ class TelegramBotService {
     this.bot.on("message", (msg) => {
       const chatId = msg.chat.id;
       this.sendMessage("Received your message", chatId);
-
-      console.log(`Received message from chat ${chatId}`);
     });
   }
 

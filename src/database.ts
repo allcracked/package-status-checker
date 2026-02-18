@@ -75,6 +75,10 @@ class DB {
       .run({ id, ...parcel });
   }
 
+  deleteParcel(id: number) {
+    this.db.prepare("DELETE FROM parcels WHERE id = @id").run({ id });
+  }
+
   addChange(change: SercargoParcelChange) {
     this.db
       .prepare(
@@ -96,4 +100,4 @@ class DB {
   }
 }
 
-export default new DB("sercargo.db");
+export default new DB("/data/sercargo.db");

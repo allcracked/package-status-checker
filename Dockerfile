@@ -1,43 +1,49 @@
-# hadolint ignore=DL3002,DL3003
-# Use official Node.js LTS version as a parent image
-ARG NODE_VERSION=20-alpine
-FROM node:${NODE_VERSION}
+# =============================================================================
+# Stage 1: Build
+# Installs all deps (including native build tools for better-sqlite3),
+# compiles TypeScript, then prunes dev dependencies.
+# =============================================================================
+FROM node:20-alpine AS builder
 
-# Build arguments for environment variables (pass these at build time)
-ARG TELEGRAM_BOT_TOKEN
-ARG TELEGRAM_CHAT_ID
-ARG SERCARGO_USER_TOKEN
-ARG SERCARGO_USER_LOCKER
-ARG PORT=3000
-
-# Expose health-check port
-EXPOSE ${PORT}
-
-# Set environment variables inside the container
-ENV TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN} \
-    TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID} \
-    SERCARGO_USER_TOKEN=${SERCARGO_USER_TOKEN} \
-    SERCARGO_USER_LOCKER=${SERCARGO_USER_LOCKER} \
-    PORT=${PORT}
-
-# Set working directory
 WORKDIR /usr/src/app
 
-# Copy package manifest and TypeScript config for dependency installation
-COPY package.json package-lock.json tsconfig.json ./
+# Native build tools required to compile better-sqlite3
+RUN apk add --no-cache python3 make g++
 
-# Install dependencies
+COPY package.json package-lock.json tsconfig.json ./
 RUN npm ci
 
-# Copy the rest of the application source
-COPY . .
+COPY src/ ./src/
+RUN npm run build && npm prune --omit=dev
 
-# Create .env file from build-time arguments/env inside container
-RUN echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" > .env && \
-    echo "TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}" >> .env && \
-    echo "SERCARGO_USER_TOKEN=${SERCARGO_USER_TOKEN}" >> .env && \
-    echo "SERCARGO_USER_LOCKER=${SERCARGO_USER_LOCKER}" >> .env && \
-    echo "PORT=${PORT}" >> .env
+# =============================================================================
+# Stage 2: Production
+# Lean image — only compiled JS and production node_modules.
+# Secrets are injected at runtime by Coolify (not baked into the image).
+# =============================================================================
+FROM node:20-alpine AS production
 
-# Default command to run the service
-CMD ["npm", "start"]
+# Run as a non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+WORKDIR /usr/src/app
+
+# Copy compiled output and pruned node_modules from builder
+COPY --from=builder --chown=appuser:appgroup /usr/src/app/dist ./dist
+COPY --from=builder --chown=appuser:appgroup /usr/src/app/node_modules ./node_modules
+
+# Persistent data directory for SQLite — mount a Coolify volume here
+RUN mkdir -p /data && chown appuser:appgroup /data
+
+USER appuser
+
+ENV NODE_ENV=production \
+    PORT=3000
+
+EXPOSE 3000
+
+# Coolify uses this to determine container health
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:3000/ || exit 1
+
+CMD ["node", "--max-old-space-size=256", "dist/index.js"]

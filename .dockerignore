@@ -1,6 +1,9 @@
 # dependencies
 node_modules
 
+# compiled output (generated during Docker build)
+dist
+
 # logs
 npm-debug.log*
 
@@ -9,3 +12,7 @@ npm-debug.log*
 
 # database file
 sercargo.db
+
+# git
+.git
+.gitignore

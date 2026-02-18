@@ -1,6 +1,8 @@
 import dayjs from "dayjs";
 import ErrorLogModel, { ErrorLogType } from "../models/ErrorLogs.model";
 
+const MAX_LOGS = 200;
+
 class ErrorLogger {
     private logs: ErrorLogModel[] = [];
 
@@ -26,6 +28,9 @@ class ErrorLogger {
             }
         }
 
+        if (this.logs.length >= MAX_LOGS) {
+            this.logs.shift();
+        }
         this.logs.push({ message, type: errorType, time: dayjs().format("YYYY-MM-DD HH:mm:ss") });
     }
 
