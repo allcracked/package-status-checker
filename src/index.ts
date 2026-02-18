@@ -108,7 +108,9 @@ async function runTask() {
     const oldParcels = db.getParcels();
     const oldCount = oldParcels.length;
     const sercargoParcels =
-      await FetchServiceInstance.sercargoFetchInTransitParcels();
+      (await FetchServiceInstance.sercargoFetchInTransitParcels()).filter(
+        (p) => !!p.guia
+      );
     const newCount = sercargoParcels.length;
     if (newCount !== oldCount) {
       const diff = newCount - oldCount;
