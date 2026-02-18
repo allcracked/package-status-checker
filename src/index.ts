@@ -112,12 +112,11 @@ async function runTask() {
       const diff = newCount - oldCount;
       const changeSign = diff > 0 ? '+' : '';
       // Determine which GUIDs were added or removed
-      const oldGuids = oldParcels.map(p => {p.guia, p.total_monto});
-      const newGuids = sercargoParcels.map(p => {p.guia, p.total_monto});
       let detail = '';
       let removedParcels: typeof oldParcels = [];
       if (diff > 0) {
-        const added = newGuids.filter(g => !oldGuids.includes(g));
+        const oldGuiaSet = new Set(oldParcels.map(p => p.guia));
+        const added = sercargoParcels.filter(p => !oldGuiaSet.has(p.guia)).map(p => p.guia);
         detail = `Added: ${added.join(', ')}`;
       } else {
         const newGuiaSet = new Set(sercargoParcels.map(p => p.guia));
@@ -132,7 +131,7 @@ async function runTask() {
       }
     }
 
-    init(sercargoParcels);
+    await init(sercargoParcels);
 
     const changes = await checkChanges(sercargoParcels);
 
