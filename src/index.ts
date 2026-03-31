@@ -1,5 +1,6 @@
 import FetchServiceInstance from "./services/fetch.service";
 import db from "./database";
+import { config } from "./config";
 
 import InTransitParcel from "./models/InTransitParcels.model";
 import dayjs from "dayjs";
@@ -12,43 +13,51 @@ import http from "http";
 
 const INTERVAL_MS = 60 * 1000;
 const PORT = Number(process.env.PORT) || 3000;
+let nextRunTimer: NodeJS.Timeout | null = null;
+let isShuttingDown = false;
+let shutdownNotificationSent = false;
 
-async function init(parcels: InTransitParcel[]) {
-  if (!parcels.length) {
-    return;
+function getGuideNumber(parcel: Pick<InTransitParcel, "guia">): number | null {
+  if (!parcel.guia) {
+    return null;
   }
 
-  for await (const parcel of parcels) {
-    if (!parcel.guia) continue;
-    const guideNumber = Number.parseInt(parcel.guia);
-    const existingParcel = db.getParcel(guideNumber);
-
-    if (existingParcel) {
-      continue;
-    }
-
-    db.addParcel({ id: guideNumber, ...parcel });
-  }
+  const guideNumber = Number.parseInt(parcel.guia, 10);
+  return Number.isNaN(guideNumber) ? null : guideNumber;
 }
 
-async function checkChanges(
+function buildParcelMap<T extends Pick<InTransitParcel, "guia">>(
+  parcels: T[]
+): Map<number, T> {
+  return parcels.reduce((acc, parcel) => {
+    const guideNumber = getGuideNumber(parcel);
+    if (guideNumber !== null) {
+      acc.set(guideNumber, parcel);
+    }
+
+    return acc;
+  }, new Map<number, T>());
+}
+
+function syncParcels(
   parcels: InTransitParcel[]
-): Promise<ParcelUpdatedResponse> {
+): ParcelUpdatedResponse {
   const returningValue: ParcelUpdatedResponse = {
     isChanged: false,
     whatChanged: [],
   };
 
-  if (!parcels.length) {
-    return returningValue;
-  }
+  const existingParcels = db.getParcels();
+  const existingParcelsByGuide = buildParcelMap(existingParcels);
+  const currentParcelsByGuide = buildParcelMap(parcels);
 
-  for await (const parcel of parcels) {
-    if (!parcel.guia) continue;
-    const guideNumber = Number.parseInt(parcel.guia);
-    const existingParcel = db.getParcel(guideNumber);
+  for (const parcel of parcels) {
+    const guideNumber = getGuideNumber(parcel);
+    if (guideNumber === null) continue;
+    const existingParcel = existingParcelsByGuide.get(guideNumber);
 
     if (!existingParcel) {
+      db.addParcel({ id: guideNumber, ...parcel });
       continue;
     }
 
@@ -99,45 +108,56 @@ async function checkChanges(
     }
   }
 
+  for (const existingParcel of existingParcels) {
+    const guideNumber = getGuideNumber(existingParcel);
+    if (guideNumber === null) continue;
+
+    if (!currentParcelsByGuide.has(guideNumber)) {
+      db.deleteParcel(guideNumber);
+    }
+  }
+
   return returningValue;
 }
 
 async function runTask() {
   try {
-    // Track previous and current package counts
     const oldParcels = db.getParcels();
     const oldCount = oldParcels.length;
-    const sercargoParcels =
-      (await FetchServiceInstance.sercargoFetchInTransitParcels()).filter(
-        (p) => !!p.guia
+    const parcelResult = await FetchServiceInstance.sercargoFetchInTransitParcels();
+
+    if (!parcelResult.ok) {
+      errorLogger.log(
+        `Skipping sync because Sercargo fetch failed: ${parcelResult.error}`,
+        ErrorLogType.WARN
       );
+      return;
+    }
+
+    const sercargoParcels = parcelResult.data.filter((p) => !!p.guia);
     const newCount = sercargoParcels.length;
+
     if (newCount !== oldCount) {
       const diff = newCount - oldCount;
       const changeSign = diff > 0 ? '+' : '';
-      // Determine which GUIDs were added or removed
       let detail = '';
-      let removedParcels: typeof oldParcels = [];
+      const oldGuiaSet = new Set(oldParcels.map(p => p.guia));
+      const newGuiaSet = new Set(sercargoParcels.map(p => p.guia));
+
       if (diff > 0) {
-        const oldGuiaSet = new Set(oldParcels.map(p => p.guia));
         const added = sercargoParcels.filter(p => !oldGuiaSet.has(p.guia)).map(p => p.guia);
         detail = `Added: ${added.join(', ')}`;
       } else {
-        const newGuiaSet = new Set(sercargoParcels.map(p => p.guia));
-        removedParcels = oldParcels.filter(p => !newGuiaSet.has(p.guia));
+        const removedParcels = oldParcels.filter(p => !newGuiaSet.has(p.guia));
         detail = `Removed: ${removedParcels.map(p => p.guia).join(', ')}`;
       }
+
       const message = `<b>Package count changed</b>\nBefore: ${oldCount}\nAfter: ${newCount}\nChange: ${changeSign}${diff}\n${detail}`;
-      await telegramBotService.sendMessage(message);
+      await telegramBotService.sendMessage(message, undefined, "HTML");
       await ntfyService.sendMessage(`Package count changed\nBefore: ${oldCount}\nAfter: ${newCount}\nChange: ${changeSign}${diff}\n${detail}`);
-      for (const parcel of removedParcels) {
-        db.deleteParcel(parcel.id);
-      }
     }
 
-    await init(sercargoParcels);
-
-    const changes = await checkChanges(sercargoParcels);
+    const changes = syncParcels(sercargoParcels);
 
     if (changes.isChanged) {
       await telegramBotService.sendUpdateMessage(changes.whatChanged || []);
@@ -148,25 +168,46 @@ async function runTask() {
   }
 }
 
+function scheduleNextRun() {
+  if (isShuttingDown) {
+    return;
+  }
+
+  nextRunTimer = setTimeout(async () => {
+    await runTask();
+    scheduleNextRun();
+  }, INTERVAL_MS);
+}
+
 async function main() {
   await telegramBotService.sendMessage(`
     <b>Bot started</b>
     Bot started at ${dayjs().format("YYYY-MM-DD HH:mm:ss")}
-    `);
+    `, undefined, "HTML");
   await ntfyService.sendMessage(`Bot started at ${dayjs().format("YYYY-MM-DD HH:mm:ss")}`);
-  runTask();
-  telegramBotService.listenForCommands();
+  await runTask();
+  if (config.TELEGRAM_POLLING_ENABLED) {
+    telegramBotService.listenForCommands();
+  }
 
-  const interval = setInterval(runTask, INTERVAL_MS);
+  scheduleNextRun();
 
   const shutdownSignals = ["SIGINT", "SIGTERM", "SIGQUIT"];
   for (const signal of shutdownSignals) {
     process.on(signal, async () => {
-      clearInterval(interval);
+      if (shutdownNotificationSent) {
+        return;
+      }
+
+      shutdownNotificationSent = true;
+      isShuttingDown = true;
+      if (nextRunTimer) {
+        clearTimeout(nextRunTimer);
+      }
       await telegramBotService.sendMessage(`
         <b>Bot stopped</b>
         Bot stopped at ${dayjs().format("YYYY-MM-DD HH:mm:ss")}
-        `);
+        `, undefined, "HTML");
       await ntfyService.sendMessage(`Bot stopped at ${dayjs().format("YYYY-MM-DD HH:mm:ss")}`);
       process.exit(0);
     });

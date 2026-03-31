@@ -14,20 +14,20 @@ export enum InTransitParcelStatus {
   TRANSIT = "Enviado a SPS",
   WAREHOUSE = "Disponible almacén Tegucigalpa",
   DELIVERED = "Entregado a Cliente",
+  TRANSIT_V4 = "En tránsito",
+  AVAILABLE = "Disponible",
 }
 
 export default interface InTransitParcel {
   pcode: number;
   pmsg: string;
   pcid?: number;
-  /** This is parseable to a date MM/DD/YYYY */
   fecha: string;
-  /** This is parseable to a date MM/DD/YYYY */
   probable: string;
   tfactura: InTransitParcelInvoiceStatus;
   /** Contains query parameters */
   btnfactura: string;
-  estado: InTransitParcelStatus;
+  estado: InTransitParcelStatus | string;
   estadocolor: string | number;
   /** Parseable to a number */
   guia: string;
@@ -37,7 +37,7 @@ export default interface InTransitParcel {
   /** Parseable to a number */
   items: string;
   tiposerv: string;
-  tipo: InTransitParcelServiceType;
+  tipo: InTransitParcelServiceType | string;
   /** Parseable to a number */
   peso: string;
   total: string;

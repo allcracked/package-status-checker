@@ -10,12 +10,8 @@ const validateEnv = () => {
     throw new Error("TELEGRAM_CHAT_ID is required");
   }
 
-  if (!process.env.SERCARGO_USER_TOKEN) {
-    throw new Error("SERCARGO_USER_TOKEN is required");
-  }
-
-  if (!process.env.SERCARGO_USER_LOCKER) {
-    throw new Error("SERCARGO_USER_LOCKER is required");
+  if (!process.env.SERCARGO_API_TOKEN) {
+    throw new Error("SERCARGO_API_TOKEN is required");
   }
 };
 
@@ -24,8 +20,14 @@ validateEnv();
 const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string(),
   TELEGRAM_CHAT_ID: z.string(),
-  SERCARGO_USER_TOKEN: z.string(),
-  SERCARGO_USER_LOCKER: z.string().transform(Number),
+  TELEGRAM_POLLING_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value !== "false"),
+  SERCARGO_API_TOKEN: z.string(),
+  SERCARGO_DB_PATH: z.string().optional(),
+  SERCARGO_USER_TOKEN: z.string().optional(),
+  SERCARGO_USER_LOCKER: z.string().transform(Number).optional(),
 });
 
 export const config = envSchema.parse(process.env);

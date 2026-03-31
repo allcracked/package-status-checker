@@ -1,68 +1,167 @@
 import { config } from "../config";
 import { ErrorLogType } from "../models/ErrorLogs.model";
-
-import InTransitParcel from "../models/InTransitParcels.model";
-import SercargoRequestData, {
-  SercargoParcelAction,
-  SercargoParcelsForUserOptions,
-  SercargoParcelsForUserSubAction,
-  SercargoParceslsForUserDeliveredOptions,
-} from "../models/SercargoRequestData.model";
+import InTransitParcel, {
+  InTransitParcelInvoiceStatus,
+} from "../models/InTransitParcels.model";
+import {
+  SercargoWrsParcel,
+  SercargoWrsParcelDetail,
+} from "../models/SercargoWrs.model";
 import errorLogger from "./log.service";
 
+interface FetchSuccess<T> {
+  ok: true;
+  data: T;
+}
+
+interface FetchFailure {
+  ok: false;
+  error: string;
+}
+
+type FetchResult<T> = FetchSuccess<T> | FetchFailure;
+
 class FetchService {
-  private sercargoURL = "https://app.sercargologistics.com/servidor/";
+  private readonly requestTimeoutMs = 10000;
+  private readonly maxRetries = 2;
+  private sercargoURL = "https://app.sercargologistics.com/v4/api/wrs";
 
   private sercargoInitArgs: RequestInit = {
-    method: "POST",
+    method: "GET",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      Accept: "application/json",
+      Authorization: `Bearer ${config.SERCARGO_API_TOKEN}`,
     },
   };
 
-  private async fetch<T>(url: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(url, init);
-    if (!response.ok) {
-      throw new Error(`Fetch failed with status ${response.status}`);
+  private async fetchWithRetry<T>(
+    url: string,
+    init?: RequestInit
+  ): Promise<FetchResult<T>> {
+    for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+
+      try {
+        const response = await fetch(url, {
+          ...init,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const error = `Fetch failed with status ${response.status}`;
+
+          if (response.status >= 500 && attempt < this.maxRetries) {
+            continue;
+          }
+
+          return { ok: false, error };
+        }
+
+        const data = (await response.json()) as T;
+        return { ok: true, data };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown fetch error";
+
+        if (attempt === this.maxRetries) {
+          return { ok: false, error: errorMessage };
+        }
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 500));
     }
-    return response.json();
+
+    return { ok: false, error: "Request failed after retries" };
   }
 
-  public async sercargoFetchInTransitParcels(): Promise<InTransitParcel[]> {
-    try {
-      const requestData: SercargoRequestData = {
-        a: SercargoParcelAction.ParcelsForUser,
-        t: config.SERCARGO_USER_TOKEN,
-        i: config.SERCARGO_USER_LOCKER,
-        p: SercargoParcelsForUserSubAction.InTransit,
-        e: SercargoParceslsForUserDeliveredOptions.NOT_DELIVERED,
-        o: SercargoParcelsForUserOptions.Last3Months,
-        fd: "",
-        fh: "",
-      };
-      const requestBody = new URLSearchParams(
-        Object.entries(requestData).reduce(
-          (acc, [key, value]) => ({
-            ...acc,
-            [key]: String(value),
-          }),
-          {}
-        )
-      );
+  private formatCurrency(amount: string | null): string {
+    const parsedAmount = Number.parseFloat(amount ?? "");
 
-      const response = await this.fetch<InTransitParcel[]>(
-        `${this.sercargoURL}app_rastreo.php`,
-        {
-          ...this.sercargoInitArgs,
-          body: requestBody.toString(),
-        }
-      );
-
-      return response;
-    } catch (error) {
-      errorLogger.log(`Error while fetching sercargo parcels ${error}`, ErrorLogType.ERROR);
-      return [];
+    if (Number.isNaN(parsedAmount)) {
+      return amount ?? "0";
     }
+
+    return `L ${parsedAmount.toFixed(2)}`;
+  }
+
+  private normalizeParcel(parcel: SercargoWrsParcel): InTransitParcel {
+    const totalAmount = parcel.total_lps_isv ?? parcel.total_lps ?? "0";
+
+    return {
+      pcode: 0,
+      pmsg: "OK",
+      pcid: parcel.id,
+      fecha: parcel.fecha,
+      probable:
+        parcel.delivery_date ??
+        parcel.available_date ??
+        parcel.fecha_probable_entrega ??
+        "",
+      tfactura:
+        parcel.tiene_factura === "SI"
+          ? InTransitParcelInvoiceStatus.YES
+          : InTransitParcelInvoiceStatus.NO,
+      btnfactura:
+        parcel.factura_id !== null && parcel.factura_id !== undefined
+          ? String(parcel.factura_id)
+          : "",
+      estado: parcel.estado,
+      estadocolor: parcel.estatus,
+      guia: String(parcel.numero),
+      tracking: parcel.track_number,
+      tracking_add: parcel.tracking_adicinales ?? "",
+      proveedor: parcel.customer_notes ?? parcel.ref1,
+      items: String(parcel.total_items),
+      tiposerv: parcel.service,
+      tipo: parcel.service.replace(/\s+/g, " ").trim(),
+      peso: parcel.peso,
+      total: this.formatCurrency(totalAmount),
+      total_monto: totalAmount,
+      rid: String(parcel.id),
+    };
+  }
+
+  public async sercargoFetchInTransitParcels(): Promise<
+    FetchResult<InTransitParcel[]>
+  > {
+    const response = await this.fetchWithRetry<SercargoWrsParcel[]>(
+      `${this.sercargoURL}/detail?option=1`,
+      this.sercargoInitArgs
+    );
+
+    if (!response.ok) {
+      errorLogger.log(
+        `Error while fetching sercargo parcels ${response.error}`,
+        ErrorLogType.ERROR
+      );
+      return response;
+    }
+
+    return {
+      ok: true,
+      data: response.data.map((parcel) => this.normalizeParcel(parcel)),
+    };
+  }
+
+  public async sercargoFetchParcelDetails(
+    parcelId: number
+  ): Promise<FetchResult<SercargoWrsParcelDetail>> {
+    const response = await this.fetchWithRetry<SercargoWrsParcelDetail>(
+      `${this.sercargoURL}/${parcelId}`,
+      this.sercargoInitArgs
+    );
+
+    if (!response.ok) {
+      errorLogger.log(
+        `Error while fetching sercargo parcel ${parcelId}: ${response.error}`,
+        ErrorLogType.ERROR
+      );
+    }
+
+    return response;
   }
 }
 

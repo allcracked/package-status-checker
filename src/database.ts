@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 
+import { config } from "./config";
 import InTransitParcel from "./models/InTransitParcels.model";
 
 interface SercargoParcel
@@ -45,6 +46,7 @@ class DB {
             changedTo TEXT NOT NULL,
             changedAt INTEGER NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS idx_changes_guia ON changes (guia);
     `);
   }
 
@@ -68,7 +70,6 @@ class DB {
 
   updateParcel(id: number, parcel: Partial<SercargoParcel>) {
     const keys = Object.keys(parcel);
-    const values = Object.values(parcel);
     const set = keys.map((key) => `${key} = @${key}`).join(", ");
     this.db
       .prepare(`UPDATE parcels SET ${set} WHERE id = @id`)
@@ -95,9 +96,13 @@ class DB {
 
   getParcelChanges(guia: string): SercargoParcelChange[] | [] {
     return this.db
-      .prepare("SELECT * FROM changes WHERE guia = @guia")
-      .get({ guia }) as SercargoParcelChange[];
+      .prepare("SELECT * FROM changes WHERE guia = @guia ORDER BY changedAt DESC")
+      .all({ guia }) as SercargoParcelChange[];
   }
 }
 
-export default new DB("/data/sercargo.db");
+const databasePath =
+  config.SERCARGO_DB_PATH ??
+  (process.env.NODE_ENV === "production" ? "/data/sercargo.db" : "sercargo.db");
+
+export default new DB(databasePath);
