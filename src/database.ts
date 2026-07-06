@@ -28,6 +28,7 @@ class DB {
   }
 
   private initialize() {
+    this.db.pragma('journal_mode = WAL');
     this.db.exec(`
         CREATE TABLE IF NOT EXISTS parcels (
             id INTEGER PRIMARY KEY,
@@ -38,7 +39,7 @@ class DB {
             probable TEXT NOT NULL,
             total_monto TEXT NOT NULL
         );
-        Create TABLE IF NOT EXISTS changes (
+        CREATE TABLE IF NOT EXISTS changes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             guia TEXT NOT NULL,
             changedKey TEXT NOT NULL,
@@ -47,6 +48,16 @@ class DB {
             changedAt INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_changes_guia ON changes (guia);
+
+        CREATE TABLE IF NOT EXISTS parcel_settings (
+            guia TEXT PRIMARY KEY,
+            nickname TEXT,
+            hidden INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS global_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
     `);
   }
 
@@ -98,6 +109,38 @@ class DB {
     return this.db
       .prepare("SELECT * FROM changes WHERE guia = @guia ORDER BY changedAt DESC")
       .all({ guia }) as SercargoParcelChange[];
+  }
+
+  getParcelSettings(guia: string): { guia: string; nickname: string | null; hidden: number } {
+    const res = this.db.prepare("SELECT * FROM parcel_settings WHERE guia = @guia").get({ guia });
+    return (res as any) || { guia, nickname: null, hidden: 0 };
+  }
+
+  setParcelNickname(guia: string, nickname: string | null) {
+    this.db.prepare(
+      "INSERT INTO parcel_settings (guia, nickname) VALUES (@guia, @nickname) ON CONFLICT(guia) DO UPDATE SET nickname = @nickname"
+    ).run({ guia, nickname });
+  }
+
+  setParcelHidden(guia: string, hidden: boolean) {
+    this.db.prepare(
+      "INSERT INTO parcel_settings (guia, hidden) VALUES (@guia, @hidden) ON CONFLICT(guia) DO UPDATE SET hidden = @hidden"
+    ).run({ guia, hidden: hidden ? 1 : 0 });
+  }
+
+  getGlobalSetting(key: string): string | null {
+    const res = this.db.prepare("SELECT value FROM global_settings WHERE key = @key").get({ key });
+    return (res as any)?.value || null;
+  }
+
+  setGlobalSetting(key: string, value: string) {
+    this.db.prepare(
+      "INSERT INTO global_settings (key, value) VALUES (@key, @value) ON CONFLICT(key) DO UPDATE SET value = @value"
+    ).run({ key, value });
+  }
+
+  close() {
+    this.db.close();
   }
 }
 

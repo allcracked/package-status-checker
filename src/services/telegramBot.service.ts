@@ -22,6 +22,15 @@ class TelegramBotService {
     });
   }
 
+  private isAuthorized(chatId: TelegramBot.ChatId): boolean {
+    return chatId.toString() === config.TELEGRAM_CHAT_ID;
+  }
+
+  private getDisplayName(guia: string): string {
+    const settings = db.getParcelSettings(guia);
+    return settings.nickname ? `${settings.nickname} (${guia})` : guia;
+  }
+
   private splitMessage(message: string, maxLength: number): string[] {
     if (message.length <= maxLength) {
       return [message];
@@ -111,7 +120,7 @@ class TelegramBotService {
       : "ETA <i>pending</i>";
 
     return [
-      `• <b>${this.escapeHtml(parcel.guia)}</b>  <i>${this.escapeHtml(parcel.estado)}</i>`,
+      `• <b>${this.escapeHtml(this.getDisplayName(parcel.guia))}</b>  <i>${this.escapeHtml(parcel.estado)}</i>`,
       `${this.escapeHtml(this.formatService(parcel.tipo))} • ${this.escapeHtml(parcel.peso)} lb • <code>${this.escapeHtml(parcel.total)}</code>`,
       etaText,
     ].join("\n");
@@ -159,7 +168,7 @@ class TelegramBotService {
       "<b>Tracked guides</b>",
       ...this.sortParcels(parcels).map(
         (parcel) =>
-          `• <b>${this.escapeHtml(parcel.guia)}</b>  <i>${this.escapeHtml(
+          `• <b>${this.escapeHtml(this.getDisplayName(parcel.guia))}</b>  <i>${this.escapeHtml(
             parcel.estado
           )}</i>`
       ),
@@ -209,7 +218,7 @@ class TelegramBotService {
     changes: UpdateParcelProperty[]
   ): string {
     return [
-      `<b>History for ${this.escapeHtml(guideId)}</b>`,
+      `<b>History for ${this.escapeHtml(this.getDisplayName(guideId))}</b>`,
       ...changes.map(
         (change) =>
           `• <b>${this.escapeHtml(
@@ -410,7 +419,7 @@ class TelegramBotService {
         await this.sendMessage(
           [
             "<b>Package Update</b>",
-            `<b>Guide</b>: <code>${this.escapeHtml(guideId)}</code>`,
+            `<b>Guide</b>: <code>${this.escapeHtml(this.getDisplayName(guideId))}</code>`,
             ...guideChanges.map(
               (change) =>
                 `• <b>${this.escapeHtml(
@@ -441,28 +450,36 @@ class TelegramBotService {
 
   public async listenForCommands() {
     try {
+      const authGuard = (message: TelegramBot.Message): boolean => {
+        if (!this.isAuthorized(message.chat.id)) {
+          this.sendMessage("<b>Unauthorized</b>", message.chat.id, "HTML");
+          return false;
+        }
+        return true;
+      };
+
       this.bot.onText(/\/status/, async (message) => {
+        if (!authGuard(message)) return;
         const chatId = message.chat.id;
-        const parcelResult = await FetchServiceInstance.sercargoFetchInTransitParcels();
+        
+        const allParcels = db.getParcels();
+        const visibleParcels = allParcels.filter(p => !db.getParcelSettings(p.guia).hidden);
 
-        if (!parcelResult.ok) {
-          await this.sendMessage(
-            `<b>Sercargo is unavailable right now.</b>\n${this.escapeHtml(
-              parcelResult.error
-            )}`,
-            chatId,
-            "HTML"
-          );
+        if (visibleParcels.length <= 0) {
+          await this.sendMessage("<b>No tracked packages found in database</b>", chatId, "HTML");
           return;
         }
 
-        if (parcelResult.data.length <= 0) {
-          await this.sendMessage("<b>No tracked packages found</b>", chatId, "HTML");
-          return;
-        }
+        // Convert SercargoParcel to InTransitParcel shape for formatStatusMessage
+        const inTransitShape = visibleParcels.map(p => ({
+          ...p,
+          pcode: 0, pmsg: "", pcid: p.id, tfactura: "" as any, btnfactura: "",
+          estadocolor: "", tracking_add: "", proveedor: "", items: "", tiposerv: "", tipo: "",
+          peso: "", total: "", rid: p.id.toString(), total_monto: p.total_monto
+        } as InTransitParcel));
 
         await this.sendMessage(
-          this.formatStatusMessage(parcelResult.data),
+          this.formatStatusMessage(inTransitShape),
           chatId,
           "HTML"
         );
@@ -472,24 +489,119 @@ class TelegramBotService {
           chatId,
           "HTML",
           {
-            reply_markup: this.buildStatusActions(parcelResult.data),
+            reply_markup: this.buildStatusActions(inTransitShape),
           }
         );
       });
 
       this.bot.onText(/\/detailed(?:\s+(\d+))?/, async (message, match) => {
+        if (!authGuard(message)) return;
         await this.handleDetailedRequest(message.chat.id, match?.[1]);
       });
 
       this.bot.onText(/\/history(?:\s+(\d+))?/, async (message, match) => {
+        if (!authGuard(message)) return;
         await this.handleHistoryRequest(message.chat.id, match?.[1]);
+      });
+
+      this.bot.onText(/\/name\s+(\d+)\s+(.+)/, async (message, match) => {
+        if (!authGuard(message)) return;
+        const chatId = message.chat.id;
+        const guia = match?.[1];
+        const nickname = match?.[2];
+
+        if (!guia || !nickname) return;
+        db.setParcelNickname(guia, nickname);
+        await this.sendMessage(`✅ Package <b>${guia}</b> named <b>${this.escapeHtml(nickname)}</b>.`, chatId, "HTML");
+      });
+
+      this.bot.onText(/\/name\s+(\d+)$/, async (message, match) => {
+        if (!authGuard(message)) return;
+        const chatId = message.chat.id;
+        const guia = match?.[1];
+
+        if (!guia) return;
+        db.setParcelNickname(guia, null); // Clear nickname
+        await this.sendMessage(`✅ Cleared nickname for package <b>${guia}</b>.`, chatId, "HTML");
+      });
+
+      this.bot.onText(/\/hide\s+(\d+)/, async (message, match) => {
+        if (!authGuard(message)) return;
+        const chatId = message.chat.id;
+        const guia = match?.[1];
+
+        if (!guia) return;
+        db.setParcelHidden(guia, true);
+        await this.sendMessage(`✅ Package <b>${this.escapeHtml(this.getDisplayName(guia))}</b> is now hidden.`, chatId, "HTML");
+      });
+
+      this.bot.onText(/\/unhide\s+(\d+)/, async (message, match) => {
+        if (!authGuard(message)) return;
+        const chatId = message.chat.id;
+        const guia = match?.[1];
+
+        if (!guia) return;
+        db.setParcelHidden(guia, false);
+        await this.sendMessage(`✅ Package <b>${this.escapeHtml(this.getDisplayName(guia))}</b> is now visible.`, chatId, "HTML");
+      });
+
+      this.bot.onText(/\/summary/, async (message) => {
+        try {
+          if (!authGuard(message)) return;
+          const chatId = message.chat.id;
+          
+          const parcels = db.getParcels();
+          let totalLempiras = 0;
+          let pendingParcels = 0;
+          let availableForPickup = 0;
+          let pickupCost = 0;
+      
+          for (const p of parcels) {
+              const settings = db.getParcelSettings(p.guia);
+              if (settings.hidden) continue;
+              
+              const cost = this.parseAmount(p.total_monto);
+              totalLempiras += cost;
+              pendingParcels++;
+      
+              if (p.estado && (p.estado.toUpperCase().includes("DISPONIBLE") || p.estado.toUpperCase().includes("AGENCIA") || p.estado.toUpperCase().includes("ENTREGAR") || p.estado.toUpperCase().includes("ENTREGADO"))) {
+                  if (!p.estado.toUpperCase().includes("ENTREGADO")) {
+                      availableForPickup++;
+                      pickupCost += cost;
+                  }
+              }
+          }
+      
+          const text = `<b>📦 Package Summary</b>\n\n` +
+                       `<b>Tracked Packages:</b> ${pendingParcels}\n` +
+                       `<b>Total Value (In Transit + Agency):</b> L ${totalLempiras.toFixed(2)}\n\n` +
+                       `<b>Ready for Pickup:</b> ${availableForPickup}\n` +
+                       `<b>Pending to Pay:</b> L ${pickupCost.toFixed(2)}`;
+                       
+          await this.sendMessage(text, chatId, "HTML");
+        } catch (error) {
+          errorLogger.log(`Error in /summary: ${error}`, ErrorLogType.ERROR);
+          await this.sendMessage(`Error: ${error}`, message.chat.id);
+        }
+      });
+
+      this.bot.onText(/\/mute/, async (message) => {
+        if (!authGuard(message)) return;
+        db.setGlobalSetting("muted", "true");
+        await this.sendMessage("🔕 <b>Notifications Muted.</b> The bot will silently sync in the background.", message.chat.id, "HTML");
+      });
+
+      this.bot.onText(/\/unmute/, async (message) => {
+        if (!authGuard(message)) return;
+        db.setGlobalSetting("muted", "false");
+        await this.sendMessage("🔔 <b>Notifications Unmuted.</b>", message.chat.id, "HTML");
       });
 
       this.bot.on("callback_query", async (query) => {
         const chatId = query.message?.chat.id;
         const callbackData = query.data;
 
-        if (!chatId || !callbackData) {
+        if (!chatId || !callbackData || !this.isAuthorized(chatId)) {
           return;
         }
 
@@ -512,6 +624,7 @@ class TelegramBotService {
       });
 
       this.bot.onText(/\/errors/, async (message) => {
+        if (!authGuard(message)) return;
         const chatId = message.chat.id;
         const allLogs = errorLogger.getLogs().slice(-20).reverse();
 

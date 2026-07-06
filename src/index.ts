@@ -2,7 +2,7 @@ import FetchServiceInstance from "./services/fetch.service";
 import db from "./database";
 import { config } from "./config";
 
-import InTransitParcel from "./models/InTransitParcels.model";
+import InTransitParcel, { InTransitParcelInvoiceStatus } from "./models/InTransitParcels.model";
 import dayjs from "dayjs";
 import ParcelUpdatedResponse from "./models/ParcelUpdatedResponse.model";
 import telegramBotService from "./services/telegramBot.service";
@@ -58,6 +58,13 @@ function syncParcels(
 
     if (!existingParcel) {
       db.addParcel({ id: guideNumber, ...parcel });
+
+      if (parcel.tfactura === InTransitParcelInvoiceStatus.NO || parcel.tfactura === InTransitParcelInvoiceStatus.NN) {
+        const msg = `⚠️ <b>Action Required!</b>\nPackage <code>${parcel.guia}</code> was added but is missing an invoice. Upload it to Sercargo soon.`;
+        telegramBotService.sendMessage(msg, undefined, "HTML").catch(console.error);
+        ntfyService.sendMessage(`Action Required: Package ${parcel.guia} missing invoice.`).catch(console.error);
+      }
+
       continue;
     }
 
@@ -137,6 +144,8 @@ async function runTask() {
     const sercargoParcels = parcelResult.data.filter((p) => !!p.guia);
     const newCount = sercargoParcels.length;
 
+    const isMuted = db.getGlobalSetting("muted") === "true";
+
     if (newCount !== oldCount) {
       const diff = newCount - oldCount;
       const changeSign = diff > 0 ? '+' : '';
@@ -152,14 +161,16 @@ async function runTask() {
         detail = `Removed: ${removedParcels.map(p => p.guia).join(', ')}`;
       }
 
-      const message = `<b>Package count changed</b>\nBefore: ${oldCount}\nAfter: ${newCount}\nChange: ${changeSign}${diff}\n${detail}`;
-      await telegramBotService.sendMessage(message, undefined, "HTML");
-      await ntfyService.sendMessage(`Package count changed\nBefore: ${oldCount}\nAfter: ${newCount}\nChange: ${changeSign}${diff}\n${detail}`);
+      if (!isMuted) {
+        const message = `<b>Package count changed</b>\nBefore: ${oldCount}\nAfter: ${newCount}\nChange: ${changeSign}${diff}\n${detail}`;
+        await telegramBotService.sendMessage(message, undefined, "HTML");
+        await ntfyService.sendMessage(`Package count changed\nBefore: ${oldCount}\nAfter: ${newCount}\nChange: ${changeSign}${diff}\n${detail}`);
+      }
     }
 
     const changes = syncParcels(sercargoParcels);
 
-    if (changes.isChanged) {
+    if (changes.isChanged && !isMuted) {
       await telegramBotService.sendUpdateMessage(changes.whatChanged || []);
       await ntfyService.sendUpdateMessage(changes.whatChanged || []);
     }
@@ -209,6 +220,7 @@ async function main() {
         Bot stopped at ${dayjs().format("YYYY-MM-DD HH:mm:ss")}
         `, undefined, "HTML");
       await ntfyService.sendMessage(`Bot stopped at ${dayjs().format("YYYY-MM-DD HH:mm:ss")}`);
+      db.close();
       process.exit(0);
     });
   }
