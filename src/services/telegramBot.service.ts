@@ -16,6 +16,10 @@ class TelegramBotService {
     this.bot = new TelegramBot(config.TELEGRAM_BOT_TOKEN, {
       polling: config.TELEGRAM_POLLING_ENABLED,
     });
+
+    this.bot.on("polling_error", (error) => {
+      console.warn(`[Telegram Polling Error] ${error.message || JSON.stringify(error)}`);
+    });
   }
 
   private splitMessage(message: string, maxLength: number): string[] {

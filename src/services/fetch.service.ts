@@ -22,7 +22,7 @@ interface FetchFailure {
 type FetchResult<T> = FetchSuccess<T> | FetchFailure;
 
 class FetchService {
-  private readonly requestTimeoutMs = 10000;
+  private readonly requestTimeoutMs = 30000;
   private readonly maxRetries = 2;
   private sercargoURL = "https://app.sercargologistics.com/v4/api/wrs";
 

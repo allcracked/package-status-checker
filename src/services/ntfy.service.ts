@@ -68,7 +68,7 @@ class NtfyService {
     const changesByGuide = this.groupChangesByGuide(changes);
 
     for (const [guideId, guideChanges] of Object.entries(changesByGuide)) {
-      const title = `Package Update – Guide ${guideId}`;
+      const title = `Package Update - Guide ${guideId}`;
       const body = guideChanges
         .map(
           (change) =>
